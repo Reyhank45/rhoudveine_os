@@ -1,0 +1,16 @@
+# Rhoudveine Init Script (initrc)
+# This script runs automatically on system boot.
+
+echo Setting up runtime environment...
+
+# Create directory structure for runtime filesystems
+mkdir /System/Rhoudveine/Runtime
+mkdir /System/Rhoudveine/Runtime/Device
+mkdir /System/Rhoudveine/Runtime/Process
+
+# Mount essential filesystems
+mount /System/Rhoudveine/Runtime/Device DeviceFS none
+mount /System/Rhoudveine/Runtime/Process ProcessFS none
+
+echo System initialized.
+echo Welcome to Rhoudveine OS.
