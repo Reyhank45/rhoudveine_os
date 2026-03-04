@@ -4,7 +4,7 @@ Rhoudveine is a custom, 64-bit operating system written in C and Assembly for th
 
 ## This Is The Latest Repository Channel
 
-visit https://github.com/altek-s/rhoudveine_os for the Stable version
+visit https://github.com/altek-s/rhoudveine_os for the **Tested Stable** version
 
 ## [ 🧠 ] Philosophy
 
