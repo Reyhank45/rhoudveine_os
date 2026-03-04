@@ -1,7 +1,10 @@
 # Rhoudveine System
 <img width="2000" height="2000" alt="RHOUDVEINE(4)" src="https://github.com/user-attachments/assets/0b314101-1171-4eca-98c4-5005edf1b21d" />
-
 Rhoudveine is a custom, 64-bit operating system written in C and Assembly for the x86_64 architecture. It is an experimental project designed to explore OS concepts from scratch, unincumbered by decades of legacy compatibility layers.
+
+## This Is The Latest Repository Channel
+
+visit https://github.com/altek-s/rhoudveine_os for the **Tested Stable** version
 
 ## [ 🧠 ] Philosophy
 
