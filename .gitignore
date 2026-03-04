@@ -1,0 +1,24 @@
+# Rhoudveine OS Root .gitignore
+
+# Output directories
+/kernel/build/
+/kernel/dist/
+/System/build/
+
+# Configuration artifacts
+/kernel/.config
+/kernel/config.mk
+/kernel/src/impl/kernel/include/autoconf.h
+
+# Compiled tools
+/kernel/tools/menuconfig
+/kernel/tools/genconfig
+
+# Disk images
+/kernel/disk.img
+*.img
+/ISO/rhoudveine.iso
+
+# Object and dependency files (general)
+*.o
+*.d

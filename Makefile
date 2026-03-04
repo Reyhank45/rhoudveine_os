@@ -18,6 +18,8 @@ system:
 build-x86_64: kernel system
 	$(MAKE) -C kernel build-x86_64
 
+$(ISO): build-x86_64
+
 clean:
 	$(MAKE) -C kernel clean
 	$(MAKE) -C System clean
