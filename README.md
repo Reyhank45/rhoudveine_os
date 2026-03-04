@@ -1,8 +1,9 @@
-# Rhoudveine Kernel
+# Rhoudveine System
+<img width="2000" height="2000" alt="RHOUDVEINE(4)" src="https://github.com/user-attachments/assets/0b314101-1171-4eca-98c4-5005edf1b21d" />
 
-Rhoudveine is a custom, 64-bit operating system kernel written in C and Assembly for the x86_64 architecture. It is an experimental project designed to explore OS concepts from scratch, unincumbered by decades of legacy compatibility layers.
+Rhoudveine is a custom, 64-bit operating system written in C and Assembly for the x86_64 architecture. It is an experimental project designed to explore OS concepts from scratch, unincumbered by decades of legacy compatibility layers.
 
-## Philosophy
+## [ 🧠 ] Philosophy
 
 **"POSIX is for people who like constraints."**
 
@@ -12,7 +13,7 @@ Rhoudveine is explicitly **Non-POSIX**. While we respect the history of Unix, we
 *   **Safety & Simplicity**: We prioritize clean, readable code over supporting every obscure standard.
 *   **Modern First**: We focus on modern hardware features (ACPI, PCI-E, UEFI-aware) rather than maintaining support for 386-era hardware.
 
-## Features
+## [ ⚙️ ] Features
 
 *   **Virtual File System (VFS)**: Robust abstraction with support for:
     *   **FAT32**: Read support (Write in progress).
@@ -28,7 +29,7 @@ Rhoudveine is explicitly **Non-POSIX**. While we respect the history of Unix, we
     *   **Graphics**: High-resolution framebuffer console with double buffering capabilities.
 *   **User Space**: Custom `libc` and `init` process loading from the filesystem.
 
-## Build Requirements
+## [ 🪨 ] Build Requirements
 
 To build Rhoudveine, you need a cross-compilation toolchain for `x86_64-elf`.
 
@@ -40,7 +41,7 @@ To build Rhoudveine, you need a cross-compilation toolchain for `x86_64-elf`.
 *   `xorriso`
 *   `mtools`
 
-**Docker (Recommended):**
+**Docker:**
 You can use the `randomdude/gcc-cross-x86_64-elf` image which contains the compiler:
 ```bash
 docker run -it -v $(pwd):/root/env randomdude/gcc-cross-x86_64-elf
@@ -48,7 +49,15 @@ docker run -it -v $(pwd):/root/env randomdude/gcc-cross-x86_64-elf
 apt-get update && apt-get install -y grub-common grub-pc-bin xorriso mtools nasm
 ```
 
-## Building
+**Manual (Recommended):**
+You can use the `randomdude/gcc-cross-x86_64-elf` image which contains the compiler:
+```bash
+brew install x86_64-elf-gcc
+# install presquites:
+apt-get update && apt-get install -y grub-common grub-pc-bin xorriso mtools nasm
+```
+
+## [ 🔨 ] Building
 
 1.  **Clone the repository:**
     ```bash
@@ -59,12 +68,12 @@ apt-get update && apt-get install -y grub-common grub-pc-bin xorriso mtools nasm
 2.  **Compile the kernel and create ISO:**
     ```bash
     make clean
-    make build-x86_64
+    make ISO
     ```
-    The kernel image will be located at `dist/x86_64/rhoudveine`.
+    The ISO image will be located at `/ISO`.
     Also there will be a conviniently crafted iso image for quick testing that will be located at `dist/x86_64/kernel.iso`.
 
-## Running
+##  [ BOOT ] Running
 
 It is **highly recommended** to run Rhoudveine using UEFI firmware (e.g., OVMF) rather than legacy BIOS, as the kernel is optimized for modern hardware standards.
 
@@ -77,7 +86,7 @@ qemu-system-x86_64 -bios /usr/share/ovmf/OVMF.fd -cdrom dist/x86_64/kernel.iso -
 *   `-m 2G`: Allocates 2GB of RAM.
 *   `-smp 4`: Simulates a 4-core processor (tested with ACPI SMP).
 
-## Architecture Stack
+## [ ⚡ ]    Architecture Stack
 
 Rhoudveine utilizes a unique, layered driver stack designed for modularity and dependency management:
 
@@ -87,7 +96,7 @@ Rhoudveine utilizes a unique, layered driver stack designed for modularity and d
 
 This hierarchy ensures a logical flow: Bus (VRAY) -> Controllers (VNODE) -> Peripherals (NVNODE).
 
-## Roadmap
+## [ 🗺️ ] Roadmap
 
 *   [ ] **Filesystem**: Implement Write support for FAT32.
 *   [ ] **Networking**: Implement a basic TCP/IP stack and drivers for Realtek/Intel NICs.
