@@ -368,7 +368,7 @@ static void draw_status_bar(uint32_t fps) {
     fb_fill_rect(0, bar_y, (int)g_fb.width, 1, COL_GLOW);
 
     // Left: mode label
-    draw_string(10, bar_y + 5, "NVEC Graphics Mode", COL_BAR_TEXT);
+    draw_string(10, bar_y + 5, "NVEC Display Server Embedded - DEMO", COL_BAR_TEXT);
 
     // Centre: FPS counter  "FPS: 123"
     char fps_buf[16];
@@ -384,7 +384,7 @@ static void draw_status_bar(uint32_t fps) {
     draw_string(((int)g_fb.width - fw) / 2, bar_y + 5, fps_buf, COL_ACCENT);
 
     // Right: hotkey hint
-    const char *hint = "[ Ctrl+Alt+F12 - Shell Mode ]";
+    const char *hint = "[ Ctrl+Alt+F10 - Shell Mode ]";
     int hlen=0; for(const char *p=hint;*p;p++) hlen++;
     int hx = (int)g_fb.width - hlen*12 - 10;
     if (hx < 0) hx = 0;
@@ -392,7 +392,7 @@ static void draw_status_bar(uint32_t fps) {
 }
 
 static void draw_subtitle(int logo_y, int logo_h) {
-    const char *text = "Rhoudveine Vector Engine";
+    const char *text = "FORCE - NVI";
     int len=0; for(const char *p=text;*p;p++) len++;
     int tw=len*12;
     draw_string(((int)g_fb.width-tw)/2, logo_y+logo_h+18, text, COL_BAR_TEXT);
