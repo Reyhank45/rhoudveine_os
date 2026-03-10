@@ -11,6 +11,8 @@
 // Forward declaration for kprintf from main.c
 extern void kprintf(const char *format, uint32_t color, ...);
 extern uint64_t virt_to_phys(void *vaddr);
+extern void usb_kbd_process_report(void *report);
+extern void usb_kbd_register(void *descriptor);
 
 // --- xHCI Register Structures (Spec 5.3) ---
 typedef volatile struct __attribute__((packed)) {
@@ -180,9 +182,14 @@ static uint32_t usb_kbd_ep1_cycle = 1;
 // Buffer for receiving HID report — DMA target
 static uint8_t *usb_kbd_report_data = NULL;
 
+// Buffer for GET_DESCRIPTOR response (18 bytes for Device Descriptor) — DMA
+// target
+static uint8_t *usb_desc_buf = NULL;
+
 // Forward declarations
 static void xhci_address_device(uint32_t slot_id, uint32_t port_id,
                                 uint32_t port_speed);
+static void xhci_get_device_descriptor(uint32_t slot_id);
 static void xhci_configure_kbd_endpoint(uint32_t slot_id, uint32_t port_speed);
 static void xhci_queue_kbd_transfer(void);
 static void xhci_set_boot_protocol(uint32_t slot_id);
@@ -592,6 +599,13 @@ void xhci_init(void) {
     return;
   }
 
+  // GET_DESCRIPTOR receive buffer — 18 bytes < 4KB
+  usb_desc_buf = (uint8_t *)xhci_alloc_low(&phys);
+  if (!usb_desc_buf) {
+    kprintf("xHCI: OOM desc_buf\n", 0xFF0000);
+    return;
+  }
+
   // ------------------------------------------------------------------
   // Configure Max Device Slots
   // ------------------------------------------------------------------
@@ -893,11 +907,109 @@ static void xhci_address_device(uint32_t slot_id, uint32_t port_id,
     usb_kbd_max_packet = max_packet_size;
     usb_kbd_port_speed = port_speed;
     usb_kbd_port_id = port_id;
-    nvnode_add_usb_device(0, 0);
+    xhci_get_device_descriptor(slot_id);
     xhci_configure_kbd_endpoint(slot_id, port_speed);
   } else {
     kprintf("xHCI: Address Device FAILED Slot=%u Code=%u\n", 0xFF0000, slot_id,
             code);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// GET_DESCRIPTOR (Device Descriptor) — fetches VID/PID and registers NVNode
+//
+// Standard USB control transfer:
+//   Setup  → bmRequestType=0x80, bRequest=0x06, wValue=0x0100 (Device Desc),
+//              wIndex=0, wLength=18
+//   Data   → 18-byte Device Descriptor
+//   Status → zero-length IN ACK
+//
+// Uses EP0 ring of the given slot. After success, registers the device with
+// nvnode_add_usb_device(vid, pid).
+// ---------------------------------------------------------------------------
+static void xhci_get_device_descriptor(uint32_t slot_id) {
+  kprintf("xHCI: GET_DESCRIPTOR (slot %u)...\n", 0x00FF0000, slot_id);
+
+  if (!usb_desc_buf) {
+    kprintf("xHCI: No descriptor buffer!\n", 0xFF0000);
+    usb_kbd_register(NULL);
+    return;
+  }
+
+  // Clear receive buffer
+  custom_memset(usb_desc_buf, 0, 4096);
+
+  xhci_trb_t *ring = EP_RING(slot_id, 0);
+  custom_memset(ring, 0, sizeof(xhci_trb_t) * 4);
+
+  // --- Setup Stage TRB ---
+  // USB setup packet (8 bytes) packed into TRB parameter field:
+  //   bmRequestType=0x80 (Device→Host, Standard, Device)
+  //   bRequest=0x06 (GET_DESCRIPTOR)
+  //   wValue=0x0100  (Descriptor Type=Device(1), Index=0)
+  //   wIndex=0x0000
+  //   wLength=18
+  uint64_t setup = (uint64_t)0x80                //  bmRequestType
+                   | ((uint64_t)0x06 << 8)       //  bRequest
+                   | ((uint64_t)0x01 << 24)      //  wValue high (Device)
+                   | ((uint64_t)0x00 << 16)      //  wValue low  (index 0)
+                   | ((uint64_t)0x0000ULL << 32) //  wIndex
+                   | ((uint64_t)18ULL << 48);    //  wLength
+  ring[0].parameter = setup;
+  ring[0].status = 8; // TRB Transfer Length = 8 (setup packet)
+  // IDT=1 (Immediate Data in parameter), TRT=3 (IN Data Stage), Cycle=1
+  ring[0].control = (TRB_TYPE_SETUP_STAGE << 10) | (3 << 16) | (1 << 6) | 1;
+
+  // --- Data Stage TRB (IN) ---
+  ring[1].parameter = virt_to_phys(usb_desc_buf);
+  ring[1].status = 18; // TRB Transfer Length = 18 bytes
+  // DIR=1 (IN), IOC=1, Cycle=1
+  ring[1].control = (TRB_TYPE_DATA_STAGE << 10) | (1 << 16) | (1 << 5) | 1;
+
+  // --- Status Stage TRB (OUT ACK) ---
+  ring[2].parameter = 0;
+  ring[2].status = 0;
+  // DIR=0 (OUT), IOC=1, Cycle=1
+  ring[2].control = (TRB_TYPE_STATUS_STAGE << 10) | (1 << 5) | 1;
+
+  // Ring EP0 doorbell (DCI 1)
+  xhci_doorbell_regs[slot_id] = 1;
+
+  // Wait for Transfer Event (we may receive 2: one for Data, one for Status)
+  // Poll event ring for up to 2 transfer events
+  int got_data = 0;
+  int timeout = 2000000;
+  while (timeout-- > 0 && got_data < 2) {
+    xhci_trb_t *ev = &xhci_event_ring[event_ring_dequeue_ptr];
+    if ((ev->control & 1) != (uint32_t)event_ring_cycle_state) {
+      for (volatile int d = 0; d < 100; d++)
+        ;
+      continue;
+    }
+
+    uint32_t trb_type = (ev->control >> 10) & 0x3F;
+    uint32_t code = (ev->status >> 24) & 0xFF;
+    uint32_t eslot = (ev->control >> 24) & 0xFF;
+
+    event_ring_dequeue_ptr =
+        (event_ring_dequeue_ptr + 1) % XHCI_EVENT_RING_SIZE;
+    if (event_ring_dequeue_ptr == 0)
+      event_ring_cycle_state = !event_ring_cycle_state;
+
+    volatile uint64_t *erdp = (uint64_t *)((uint8_t *)xhci_runtime_regs + 0x38);
+    *erdp = virt_to_phys(&xhci_event_ring[event_ring_dequeue_ptr]) | (1 << 3);
+
+    if (trb_type == TRB_TYPE_TRANSFER_EVENT && eslot == slot_id) {
+      kprintf("xHCI: Descriptor transfer event code=%u\n", 0x00FF0000, code);
+      got_data++;
+    }
+  }
+
+  if (got_data > 0) {
+    usb_kbd_register(usb_desc_buf);
+  } else {
+    kprintf("xHCI: GET_DESCRIPTOR timeout — using VID/PID 0:0\n", 0xFFFF00);
+    usb_kbd_register(NULL);
   }
 }
 
@@ -1040,7 +1152,6 @@ static void xhci_queue_kbd_transfer(void) {
 // ---------------------------------------------------------------------------
 // Poll for keyboard transfer events (call from main input loop)
 // ---------------------------------------------------------------------------
-extern void usb_kbd_process_report(void *report);
 
 void usb_kbd_poll(void) {
   if (!usb_kbd_ep1_configured || !xhci_op_regs)

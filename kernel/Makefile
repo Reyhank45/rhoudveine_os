@@ -48,16 +48,21 @@ x86_64_asm_object_files := $(patsubst src/impl/x86_64/%.asm, build/x86_64/%.o, $
 
 # build init module (C)
 
-# discover all C sources under init/ (including subdirs)
-init_c_source_files := $(shell find init -name '*.c')
-init_c_object_files := $(patsubst init/%.c, build/init/%.o, $(init_c_source_files))
-init_core_object := build/init/init.o
+# discover all C sources under src/impl/init/ (including subdirs)
+init_c_source_files := $(shell find src/impl/init -name '*.c')
+init_c_object_files := $(patsubst src/impl/init/%.c, build/init/%.o, $(init_c_source_files))
+
+# discover all ASM sources under src/impl/init/
+init_asm_source_files := $(shell find src/impl/init -name '*.asm')
+init_asm_object_files := $(patsubst src/impl/init/%.asm, build/init/%.o, $(init_asm_source_files))
+
+init_core_object := $(init_c_object_files) $(init_asm_object_files)
 
 
 # Flags
 CFLAGS := -I src/intf -I includes -I src/impl/kernel -ffreestanding -nostdlib -fno-builtin -fno-stack-protector -O0 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -MMD -MP
 
-$(init_c_object_files): build/init/%.o : init/%.c $(AUTOCONF_H)
+$(init_c_object_files): build/init/%.o : src/impl/init/%.c $(AUTOCONF_H)
 	@mkdir -p $(dir $@)
 	@echo "  CC      $@"
 	@x86_64-elf-gcc -c $(CFLAGS) $< -o $@
@@ -94,6 +99,11 @@ $(x86_64_asm_object_files): build/x86_64/%.o : src/impl/x86_64/%.asm
 	@echo "  NASM    $@"
 	@nasm -f elf64 $< -o $@
 
+$(init_asm_object_files): build/init/%.o : src/impl/init/%.asm
+	@mkdir -p $(dir $@)
+	@echo "  NASM    $@"
+	@nasm -f elf64 $< -o $@
+
 .PHONY: build-x86_64
 build-x86_64: $(kernel_object_files) $(x86_64_object_files) $(init_core_object) limine
 	@mkdir -p dist/x86_64
@@ -106,14 +116,15 @@ build-x86_64: $(kernel_object_files) $(x86_64_object_files) $(init_core_object) 
 	@cp dist/x86_64/rhoudveine build/iso_root/boot/rhoudveine
 	@cp targets/x86_64/limine.conf build/iso_root/boot/limine/limine.conf
 	@cp limine/limine-bios.sys limine/limine-bios-cd.bin limine/limine-uefi-cd.bin build/iso_root/boot/limine/
-	@cp init/init.elf build/iso_root/System/Rhoudveine/Booter/init || cp build/init/init.o build/iso_root/System/Rhoudveine/Booter/init || true
+	@cp build/init/init.o build/iso_root/System/Rhoudveine/Booter/init || true
+	@if [ -f ../rootfs.tar ]; then cp ../rootfs.tar build/iso_root/System/Rhoudveine/rootfs.tar; echo "  COPY    rootfs.tar"; else echo "  WARNING rootfs.tar not found (run 'make' from root directory)"; fi
 	@echo "  ISO     dist/x86_64/kernel.iso"
 	@xorriso -as mkisofs -b boot/limine/limine-bios-cd.bin \
 		-no-emul-boot -boot-load-size 4 -boot-info-table \
 		--efi-boot boot/limine/limine-uefi-cd.bin \
 		-efi-boot-part --efi-boot-image --protective-msdos-label \
-		build/iso_root -o dist/x86_64/kernel.iso > /dev/null 2>&1
-	@./limine/limine bios-install dist/x86_64/kernel.iso
+		build/iso_root -o ../ISO/rhoudveine.iso > /dev/null 2>&1
+	@./limine/limine bios-install ../ISO/rhoudveine.iso
 
 clean:
 	@echo "  CLEAN"

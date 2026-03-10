@@ -1,21 +1,21 @@
 #ifndef NVEC_H
 #define NVEC_H
 
-#include <stddef.h>
 #include <stdint.h>
+#include <stddef.h>
 
 // Display mode state
 typedef enum {
-  DISPLAY_MODE_SHELL = 0,
-  DISPLAY_MODE_GRAPHICS = 1
+    DISPLAY_MODE_SHELL    = 0,
+    DISPLAY_MODE_GRAPHICS = 1
 } display_mode_t;
 
 // Framebuffer info (filled at init from Limine)
 typedef struct {
-  uint32_t *addr;
-  uint32_t width;
-  uint32_t height;
-  uint32_t pitch; // bytes per scanline
+    uint32_t *addr;
+    uint32_t  width;
+    uint32_t  height;
+    uint32_t  pitch;   // bytes per scanline
 } nvec_fb_t;
 
 // ── Public API ──────────────────────────────────────────────────────────────
@@ -53,5 +53,9 @@ int nvec_suppress_console(void);
 //   }
 //
 void nvec_tick(void);
+
+// Returns TSC ticks per millisecond (calibrated by PIT at boot).
+// Use for busy-wait delays: for (volatile uint64_t i=0; i<tsc_ms(n); i++);
+uint64_t nvec_tsc_khz(void);
 
 #endif // NVEC_H

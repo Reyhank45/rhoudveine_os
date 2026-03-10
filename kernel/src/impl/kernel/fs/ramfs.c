@@ -12,6 +12,11 @@ extern void kprintf(const char *format, uint32_t color, ...);
 // - Inefficient, uses full 4KB for even small data if we don't block.
 // - For now: 1 file = 1 metadata page + N data pages.
 
+typedef struct ramfs_file_data {
+    uint8_t *pages[128];  // Array of page pointers (supports up to 512KB per file)
+    uint32_t num_pages;   // Number of allocated pages
+} ramfs_file_data_t;
+
 typedef struct ramfs_node_data {
     // We can store children pointers here for directories
     // Simplicity: fixed array of children
@@ -22,9 +27,12 @@ typedef struct ramfs_node_data {
 
 // Static memory pool for ramfs (no dynamic allocation)
 #define MAX_RAMFS_NODES 64
+#define MAX_RAMFS_FILES 64
 static struct vfs_node ramfs_node_pool[MAX_RAMFS_NODES];
 static ramfs_node_data_t ramfs_data_pool[MAX_RAMFS_NODES]; // One data block per node (wasteful but safe)
+static ramfs_file_data_t file_data_pool[MAX_RAMFS_FILES];  // File metadata pool
 static int ramfs_node_count = 0;
+static int file_data_count = 0;
 
 // Forward declaration
 int ramfs_mkdir_op(struct vfs_node *parent, const char *name);
@@ -63,10 +71,132 @@ static struct vfs_node* ramfs_alloc_node(const char *name, int flags) {
     if (flags & VFS_DIRECTORY) {
         node->fs_data = (void*)data;
     } else {
-        node->fs_data = NULL; // Files don't have data in this simplified version yet
+        node->fs_data = NULL; // Will be allocated on first write
     }
     
     return node;
+}
+
+/* Write data to a ramfs file */
+static int ramfs_write(struct vfs_node *node, uint64_t offset, uint32_t size, const uint8_t *data) {
+    if (!node || (node->flags & VFS_DIRECTORY)) {
+        return -1;
+    }
+    
+    ramfs_file_data_t *file_data = (ramfs_file_data_t*)node->fs_data;
+    
+    /* Allocate from file_data pool on first write */
+    if (!file_data) {
+        if (file_data_count >= MAX_RAMFS_FILES) {
+            kprintf("ramfs: File data pool exhausted\n", 0xFFFF0000);
+            return -1;
+        }
+        
+        file_data = &file_data_pool[file_data_count++];
+        file_data->num_pages = 0;
+        for (int i = 0; i < 128; i++) {
+            file_data->pages[i] = NULL;
+        }
+        node->fs_data = (void*)file_data;
+    }
+    
+    /* Calculate which pages we need */
+    uint32_t start_page = offset / 4096;
+    uint32_t end_page = (offset + size - 1) / 4096;
+    
+    /* Allocate necessary pages */
+    for (uint32_t page_idx = file_data->num_pages; page_idx <= end_page && page_idx < 128; page_idx++) {
+        uint64_t page_addr = pfa_alloc_low();
+        if (!page_addr) {
+            kprintf("ramfs: Failed to allocate file page %u\n", 0xFFFF0000, page_idx);
+            return -1;
+        }
+        file_data->pages[page_idx] = (uint8_t*)phys_to_virt(page_addr);
+    }
+    
+    /* Update page count */
+    if (end_page >= file_data->num_pages) {
+        file_data->num_pages = end_page + 1;
+    }
+    
+    /* Write data across pages */
+    uint32_t written = 0;
+    uint32_t remaining = size;
+    uint64_t current_offset = offset;
+    
+    while (remaining > 0) {
+        uint32_t page_idx = current_offset / 4096;
+        uint32_t page_offset = current_offset % 4096;
+        uint32_t bytes_to_write = (4096 - page_offset < remaining) ? (4096 - page_offset) : remaining;
+        
+        if (page_idx >= file_data->num_pages || !file_data->pages[page_idx]) {
+            kprintf("ramfs: Invalid page index %u\n", 0xFFFF0000, page_idx);
+            break;
+        }
+        
+        /* Write to this page */
+        for (uint32_t i = 0; i < bytes_to_write; i++) {
+            file_data->pages[page_idx][page_offset + i] = data[written + i];
+        }
+        
+        written += bytes_to_write;
+        remaining -= bytes_to_write;
+        current_offset += bytes_to_write;
+    }
+    
+    /* Update size if necessary */
+    if (offset + written > node->size) {
+        node->size = offset + written;
+    }
+    
+    return written;
+}
+
+/* Read data from a ramfs file */
+static int ramfs_read(struct vfs_node *node, uint64_t offset, uint32_t size, uint8_t *buffer) {
+    if (!node || (node->flags & VFS_DIRECTORY)) {
+        return -1;
+    }
+    
+    ramfs_file_data_t *file_data = (ramfs_file_data_t*)node->fs_data;
+    if (!file_data) {
+        return 0; /* Empty file */
+    }
+    
+    /* Don't read past end of file */
+    if (offset >= node->size) {
+        return 0;
+    }
+    
+    if (offset + size > node->size) {
+        size = node->size - offset;
+    }
+    
+    /* Read data across pages */
+    uint32_t read_count = 0;
+    uint32_t remaining = size;
+    uint64_t current_offset = offset;
+    
+    while (remaining > 0 && current_offset < node->size) {
+        uint32_t page_idx = current_offset / 4096;
+        uint32_t page_offset = current_offset % 4096;
+        uint32_t bytes_to_read = (4096 - page_offset < remaining) ? (4096 - page_offset) : remaining;
+        
+        if (page_idx >= file_data->num_pages || !file_data->pages[page_idx]) {
+            break;
+        }
+        
+        /* Read from this page */
+        for (uint32_t i = 0; i < bytes_to_read; i++) {
+            buffer[read_count + i] = file_data->pages[page_idx][page_offset + i];
+        }
+        
+        read_count += bytes_to_read;
+        remaining -= bytes_to_read;
+        current_offset += bytes_to_read;
+    }
+    
+    return read_count;
 }
 
 static struct vfs_node* ramfs_finddir(struct vfs_node *node, const char *name) {
@@ -136,6 +266,8 @@ static int ramfs_create(struct vfs_node *parent, const char *name, uint32_t flag
     new_node->readdir = ramfs_readdir;
     new_node->create = ramfs_create;
     new_node->mkdir = ramfs_mkdir_op;
+    new_node->read = ramfs_read;
+    new_node->write = ramfs_write;
 
     data->children[slot] = new_node;
     
@@ -169,6 +301,8 @@ static int ramfs_mount_op(const char *device, struct mount_point *mp) {
     root->finddir = ramfs_finddir;
     root->create = ramfs_create;
     root->mkdir = ramfs_mkdir_op;
+    root->read = ramfs_read;
+    root->write = ramfs_write;
     
     mp->root = root;
     mp->fs_private = NULL;

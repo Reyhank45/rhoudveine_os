@@ -17,31 +17,44 @@ extern syscall_handler
 ; R9  = arg6
 
 syscall_entry:
-    ; Save user stack pointer
-    mov r12, rsp
+    ; SYSCALL instruction clobbers RCX (return address) and R11 (RFLAGS)
+    ; We must save them. We also need to save all caller-saved registers
+    ; because the SysV ABI doesn't guarantee their preservation across calls.
+    ; However, we also need to save callee-saved registers to be safe during context switches.
+
+    ; 1. Save user stack pointer and swap to kernel stack
+    ; We use R12 as a temporary but MUST save it first if we want to be clean.
+    ; Actually, saving everything on the kernel stack is better.
     
-    ; Switch to kernel stack (use a simple approach for now)
-    ; In a real implementation, we'd use the TSS or per-CPU data
-    ; For now, we'll use a static kernel stack
+    ; FOR NOW: Use a static kernel stack. 
+    ; In a multi-threaded OS, we'd use swapgs to get per-CPU data (TSS/Stack).
+    
+    mov [rel temp_rsp_storage], rsp
     lea rsp, [rel kernel_syscall_stack_top]
+
+    ; Push all registers to create a full interrupt-like frame
+    push qword [rel temp_rsp_storage] ; User RSP
+    push r11                          ; User RFLAGS
+    push rcx                          ; User RIP (return address)
     
-    ; Save callee-saved registers
+    push rax
+    push rdi
+    push rsi
+    push rdx
+    push r10
+    push r8
+    push r9
+    
     push rbx
     push rbp
     push r12
     push r13
     push r14
     push r15
-    
-    ; Save RCX (return address) and R11 (flags)
-    push rcx
-    push r11
-    
-    ; Set up arguments for syscall_handler
-    ; syscall_handler(num, arg1, arg2, arg3, arg4, arg5)
-    ; RAX already has syscall number, move to RDI
-    ; Current: RAX=num, RDI=arg1, RSI=arg2, RDX=arg3, R10=arg4, R8=arg5
-    ; Need:    RDI=num, RSI=arg1, RDX=arg2, RCX=arg3, R8=arg4, R9=arg5
+
+    ; Set up arguments for syscall_handler(num, arg1, arg2, arg3, arg4, arg5)
+    ; SYSCALL convention: RAX=num, RDI=a1, RSI=a2, RDX=a3, R10=a4, R8=a5, R9=a6
+    ; System V C convention: RDI, RSI, RDX, RCX, R8, R9
     
     mov r9, r8      ; arg5 -> r9
     mov r8, r10     ; arg4 -> r8
@@ -50,13 +63,10 @@ syscall_entry:
     mov rsi, rdi    ; arg1 -> rsi
     mov rdi, rax    ; num -> rdi
     
-    ; Call the C handler
     call syscall_handler
     ; Return value is in RAX
     
-    ; Restore saved registers
-    pop r11
-    pop rcx
+    ; Restore registers (inverse order)
     pop r15
     pop r14
     pop r13
@@ -64,15 +74,22 @@ syscall_entry:
     pop rbp
     pop rbx
     
-    ; Restore user stack
-    mov rsp, r12
+    pop r9
+    pop r8
+    pop r10
+    pop rdx
+    pop rsi
+    pop rdi
+    ; Don't pop RAX, it holds the return value
+    add rsp, 8
     
-    ; Return to userspace
-    ; SYSRET expects:
-    ; RCX = return address
-    ; R11 = saved RFLAGS
+    pop rcx ; Restore RIP
+    pop r11 ; Restore RFLAGS
+    pop rsp ; Restore user RSP
+    
     o64 sysret
 
 section .bss
-    resb 4096
+    resb 8192
 kernel_syscall_stack_top:
+    temp_rsp_storage: resq 1

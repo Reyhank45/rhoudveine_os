@@ -157,13 +157,6 @@ uint64_t mm_get_free_memory(void) {
 // Virtual Memory Manager (VMM)
 // ---------------------------------------------------------------------------
 
-#define PAGE_PRESENT (1ULL << 0)
-#define PAGE_RW (1ULL << 1)
-#define PAGE_USER (1ULL << 2)
-#define PAGE_PWT (1ULL << 3)
-#define PAGE_PCD (1ULL << 4) // Page Cache Disable
-#define PAGE_NO_EXEC (1ULL << 63)
-
 // MMIO virtual address region. Initialized in mm_init.
 static uint64_t next_mmio_addr;
 
@@ -171,7 +164,7 @@ static uint64_t next_mmio_addr;
 // map_page — map a single 4KB physical page to a virtual address with flags.
 // All intermediate page table pages are allocated from low memory.
 // ---------------------------------------------------------------------------
-static void map_page(uint64_t phys_addr, uint64_t virt_addr, uint64_t flags) {
+void map_page(uint64_t phys_addr, uint64_t virt_addr, uint64_t flags) {
   uint64_t pml4_index = (virt_addr >> 39) & 0x1FF;
   uint64_t pdpt_index = (virt_addr >> 30) & 0x1FF;
   uint64_t pdt_index = (virt_addr >> 21) & 0x1FF;
@@ -195,9 +188,10 @@ static void map_page(uint64_t phys_addr, uint64_t virt_addr, uint64_t flags) {
       return;
     }
     custom_memset(phys_to_virt(pdpt_phys), 0, PAGE_SIZE);
-    pml4_virt[pml4_index] = pdpt_phys | PAGE_PRESENT | PAGE_RW | caching_flags;
+    pml4_virt[pml4_index] = pdpt_phys | PAGE_PRESENT | PAGE_RW |
+                            (flags & PAGE_USER) | caching_flags;
   } else {
-    pml4_virt[pml4_index] |= caching_flags;
+    pml4_virt[pml4_index] |= (flags & PAGE_USER) | caching_flags;
   }
   uint64_t *pdpt_virt = phys_to_virt(pml4_virt[pml4_index] & PADDR_MASK);
 
@@ -209,9 +203,10 @@ static void map_page(uint64_t phys_addr, uint64_t virt_addr, uint64_t flags) {
       return;
     }
     custom_memset(phys_to_virt(pdt_phys), 0, PAGE_SIZE);
-    pdpt_virt[pdpt_index] = pdt_phys | PAGE_PRESENT | PAGE_RW | caching_flags;
+    pdpt_virt[pdpt_index] =
+        pdt_phys | PAGE_PRESENT | PAGE_RW | (flags & PAGE_USER) | caching_flags;
   } else {
-    pdpt_virt[pdpt_index] |= caching_flags;
+    pdpt_virt[pdpt_index] |= (flags & PAGE_USER) | caching_flags;
   }
   uint64_t *pdt_virt = phys_to_virt(pdpt_virt[pdpt_index] & PADDR_MASK);
 
@@ -223,9 +218,10 @@ static void map_page(uint64_t phys_addr, uint64_t virt_addr, uint64_t flags) {
       return;
     }
     custom_memset(phys_to_virt(pt_phys), 0, PAGE_SIZE);
-    pdt_virt[pdt_index] = pt_phys | PAGE_PRESENT | PAGE_RW | caching_flags;
+    pdt_virt[pdt_index] =
+        pt_phys | PAGE_PRESENT | PAGE_RW | (flags & PAGE_USER) | caching_flags;
   } else {
-    pdt_virt[pdt_index] |= caching_flags;
+    pdt_virt[pdt_index] |= (flags & PAGE_USER) | caching_flags;
   }
   uint64_t *pt_virt = phys_to_virt(pdt_virt[pdt_index] & PADDR_MASK);
 
@@ -238,15 +234,6 @@ static void map_page(uint64_t phys_addr, uint64_t virt_addr, uint64_t flags) {
 
 // ---------------------------------------------------------------------------
 // mmio_map_low — remap a low (<4GB) physical MMIO region with UC flags.
-//
-// The bootloader's identity mapping covers low addresses, but it maps them
-// as normal cacheable memory. For MMIO we need uncacheable (PCD+PWT) pages.
-// We achieve this by creating NEW virtual mappings (in the MMIO VA region)
-// that point to the same physical frames but with PCD|PWT set.
-//
-// This is the FIX: previously the code returned `(void*)physical_addr`
-// which reused the bootloader's cacheable identity mapping — causing hangs
-// on real hardware when the CPU cached register reads/writes.
 // ---------------------------------------------------------------------------
 static void *mmio_map_low(uint64_t physical_addr, size_t size) {
   uint64_t phys_base = physical_addr & ~0xFFFULL;
@@ -401,10 +388,6 @@ void mm_init(void) {
           mm_get_free_memory() / (1024 * 1024));
 
   // Reserve MMIO virtual address region high in kernel space.
-  // We keep two sub-regions:
-  //   0xFFFFFFFF80000000 .. 0xFFFFFFFF8FFFFFFF  — low MMIO remaps  (256MB)
-  //   0xFFFFFFFF90000000 .. 0xFFFFFFFFFFFFFFFF  — high MMIO        (rest)
-  // Both use the same next_mmio_addr counter — they share the window.
   next_mmio_addr = 0xFFFFFFFF80000000ULL;
   kprintf("MM: MMIO mapping region starts at 0x%lx\n", 0x00FF0000,
           next_mmio_addr);
@@ -412,16 +395,8 @@ void mm_init(void) {
 
 // ---------------------------------------------------------------------------
 // mmio_remap — map a physical MMIO region into virtual address space
-//              with cache-disable (UC) flags regardless of physical address.
-//
-// FIX: The old code returned `(void*)physical_addr` for low addresses,
-//      reusing the bootloader's cacheable identity mapping. MMIO must
-//      always be mapped uncacheable. Now we call map_page with PCD|PWT
-//      for both low and high physical addresses.
 // ---------------------------------------------------------------------------
 void *mmio_remap(uint64_t physical_addr, size_t size) {
-  // Both low (<4GB) and high (>=4GB) physical MMIO regions get the same
-  // treatment: a fresh virtual mapping with PCD+PWT (uncacheable).
   uint64_t phys_base = physical_addr & ~0xFFFULL;
   uint64_t offset = physical_addr & 0xFFFULL;
 
